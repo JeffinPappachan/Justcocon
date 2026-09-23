@@ -1,6 +1,12 @@
 node_modules/
 dist/
 build/
+*.tsbuildinfo
+
+# Vite/TS emit accidentally committed beside TSX sources
+apps/*/src/App.js
+apps/*/src/main.js
+
 .env
 .env.*
 .cursor/mcp.json
