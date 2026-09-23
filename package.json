@@ -1,0 +1,22 @@
+{
+  "name": "justcocon",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "dev:web": "pnpm --dir apps/web dev",
+    "dev:oms": "pnpm --dir apps/oms dev",
+    "dev:whatsapp": "pnpm --dir apps/whatsapp-service dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.2"
+  },
+  "packageManager": "pnpm@9.15.0"
+}

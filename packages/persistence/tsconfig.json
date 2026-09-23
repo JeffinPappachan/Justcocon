@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    "noEmit": false,
+    "declaration": true,
+    "declarationMap": true,
+    "paths": {
+      "@justcocon/booking-domain": ["../booking-domain/src/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts"]
+}

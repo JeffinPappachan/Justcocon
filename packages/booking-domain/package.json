@@ -1,0 +1,20 @@
+{
+  "name": "@justcocon/booking-domain",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "pnpm --filter @justcocon/shared-types build && pnpm --filter @justcocon/validation build && pnpm build && node --test dist/*.test.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@justcocon/shared-types": "workspace:*",
+    "@justcocon/validation": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.8.1"
+  }
+}

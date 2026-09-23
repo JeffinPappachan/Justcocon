@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noEmit": true,
+    "forceConsistentCasingInFileNames": true,
+    "baseUrl": ".",
+    "paths": {
+      "@justcocon/shared-types": ["packages/shared-types/src"],
+      "@justcocon/booking-domain": ["packages/booking-domain/src"],
+      "@justcocon/config": ["packages/config/src"],
+      "@justcocon/validation": ["packages/validation/src"],
+      "@justcocon/persistence": ["packages/persistence/src"]
+    }
+  },
+  "exclude": ["node_modules", "dist", "build"]
+}
