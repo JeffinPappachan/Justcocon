@@ -10,17 +10,11 @@ export interface BaileysAdapter extends WhatsAppTransport {
   ingestBaileysMessage(raw: BaileysLikeInboundMessage): Promise<void>;
 }
 
-/**
- * Mock-first Baileys adapter. Live socket wiring is gated behind
- * WHATSAPP_ENABLE_LIVE and is not enabled until staging manual pairing.
- */
+/** Mock Baileys transport for tests and WHATSAPP_ENABLE_LIVE=false. */
 export class MockFirstBaileysAdapter implements BaileysAdapter {
   private readonly mock = new MockWhatsAppTransport();
-  private readonly enableLive: boolean;
 
-  constructor(config: AppConfig) {
-    this.enableLive = config.whatsappEnableLive;
-  }
+  constructor(_config: AppConfig) {}
 
   get mockTransport(): MockWhatsAppTransport {
     return this.mock;
@@ -29,11 +23,6 @@ export class MockFirstBaileysAdapter implements BaileysAdapter {
   async start(
     onInbound: (message: InboundWhatsAppMessage) => Promise<void>,
   ): Promise<void> {
-    if (this.enableLive) {
-      throw new Error(
-        "Live Baileys is not enabled in this build. Keep WHATSAPP_ENABLE_LIVE=false until staging review.",
-      );
-    }
     await this.mock.start(onInbound);
   }
 
@@ -42,14 +31,6 @@ export class MockFirstBaileysAdapter implements BaileysAdapter {
   }
 
   async getConnectionStatus(): Promise<ConnectionStatus> {
-    if (this.enableLive) {
-      return {
-        connected: false,
-        provider: "baileys",
-        status: "error",
-        details: "live mode not implemented",
-      };
-    }
     const status = await this.mock.getConnectionStatus();
     return { ...status, provider: "baileys-mock" };
   }

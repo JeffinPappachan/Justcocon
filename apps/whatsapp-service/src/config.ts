@@ -46,4 +46,12 @@ export function validateConfig(config: AppConfig): void {
       );
     }
   }
+
+  if (config.whatsappEnableLive) {
+    if (config.appEnv === "production") {
+      throw new Error(
+        "WHATSAPP_ENABLE_LIVE=true is blocked when APP_ENV=production. Use staging only.",
+      );
+    }
+  }
 }

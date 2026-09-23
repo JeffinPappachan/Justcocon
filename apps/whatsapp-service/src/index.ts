@@ -22,7 +22,10 @@ const bookingBundle =
     ? createSupabaseBookingOrchestratorBundle(validationClock)
     : createInMemoryBookingOrchestratorBundle(validationClock);
 
-const transport: WhatsAppTransport = createWhatsAppTransport(config);
+const transport: WhatsAppTransport = createWhatsAppTransport(
+  config,
+  createLogger("baileys"),
+);
 
 const inboundHandler = createInboundMessageHandler({
   repos: bookingBundle.repos,
