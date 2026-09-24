@@ -10,6 +10,8 @@ const clock = { todayIsoDate: () => "2026-09-25" };
 
 function happyDraftSteps(context: ReturnType<typeof createInitialContext>) {
   const steps = [
+    "hi",
+    "START",
     "BOOK",
     "Anu Thomas",
     "Kochi, Kerala",

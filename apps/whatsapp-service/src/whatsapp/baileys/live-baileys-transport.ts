@@ -1,8 +1,11 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import { Boom } from "@hapi/boom";
 import makeWASocket, {
   DisconnectReason,
+  generateMessageIDV2,
+  jidNormalizedUser,
+  proto,
   type WASocket,
   useMultiFileAuthState,
 } from "@whiskeysockets/baileys";
@@ -13,8 +16,12 @@ import type { createLogger } from "../../logger.js";
 import type { ConnectionStatus, MessageResult } from "../../types.js";
 import type { InboundWhatsAppMessage, WhatsAppTransport } from "../transport-types.js";
 import type { BaileysLikeInboundMessage } from "./baileys-types.js";
+import { isDirectUserChatJid } from "./chat-jid.js";
 import { mapBaileysMessageToInbound } from "./inbound-mapper.js";
-import { e164ToWhatsAppUserJid } from "./phone-jid.js";
+import { isRealMessage } from "@whiskeysockets/baileys";
+import { resolveWhatsAppOutboundJid } from "./phone-jid.js";
+import type { WhatsAppOutboundMessage } from "../outbound-types.js";
+import { nativeFlowRelayAdditionalNodes } from "./native-flow-relay-nodes.js";
 
 type ServiceLogger = ReturnType<typeof createLogger>;
 
@@ -29,7 +36,6 @@ export class LiveBaileysTransport implements WhatsAppTransport {
     status: "disconnected",
   };
   private stopping = false;
-  private loggedOut = false;
 
   constructor(
     private readonly config: AppConfig,
@@ -41,7 +47,6 @@ export class LiveBaileysTransport implements WhatsAppTransport {
   ): Promise<void> {
     this.inboundHandler = onInbound;
     this.stopping = false;
-    this.loggedOut = false;
     void this.runConnectLoop();
     await this.waitUntilConnected();
   }
@@ -69,6 +74,191 @@ export class LiveBaileysTransport implements WhatsAppTransport {
     return { ...this.connectionState };
   }
 
+  async sendOutbound(
+    recipient: string,
+    message: WhatsAppOutboundMessage,
+  ): Promise<MessageResult> {
+    if (message.kind === "text") {
+      return this.sendTextMessage(recipient, message.body);
+    }
+    if (message.kind === "native_flow") {
+      return this.sendNativeFlowMessage(recipient, message);
+    }
+    if (message.kind === "buttons") {
+      return this.sendButtonsMessage(recipient, message);
+    }
+    return this.sendListMessage(recipient, message);
+  }
+
+  private async sendNativeFlowMessage(
+    recipient: string,
+    message: Extract<WhatsAppOutboundMessage, { kind: "native_flow" }>,
+  ): Promise<MessageResult> {
+    const sock = this.socket;
+    if (!sock || !this.connectionState.connected || !sock.user?.id) {
+      return {
+        ok: false,
+        provider: "baileys",
+        timestamp: new Date().toISOString(),
+        error: "WhatsApp socket is not connected",
+      };
+    }
+
+    const jid = resolveWhatsAppOutboundJid(recipient);
+    const messageId = generateMessageIDV2(jidNormalizedUser(sock.user.id));
+    const interactiveMessage: proto.Message.IInteractiveMessage = {
+      body: { text: message.body },
+      footer: message.footer ? { text: message.footer } : undefined,
+      header: message.title
+        ? { title: message.title, hasMediaAttachment: false }
+        : undefined,
+      nativeFlowMessage: {
+        messageVersion: 1,
+        buttons: message.buttons.map((button) => ({
+          name: "quick_reply",
+          buttonParamsJson: JSON.stringify({
+            display_text: button.displayText,
+            id: button.buttonId,
+          }),
+        })),
+      },
+    };
+
+    try {
+      const payload = proto.Message.fromObject({ interactiveMessage });
+      await sock.relayMessage(jid, payload, {
+        messageId,
+        additionalNodes: nativeFlowRelayAdditionalNodes(jid) as Parameters<
+          typeof sock.relayMessage
+        >[2]["additionalNodes"],
+      });
+      return {
+        ok: true,
+        provider: "baileys",
+        timestamp: new Date().toISOString(),
+        messageId,
+      };
+    } catch (error) {
+      const errMsg =
+        error instanceof Error ? error.message : "native flow send failed";
+      this.logger.error("Baileys native flow message send failed", { errMsg });
+      return {
+        ok: false,
+        provider: "baileys",
+        timestamp: new Date().toISOString(),
+        error: errMsg,
+      };
+    }
+  }
+
+  private async sendButtonsMessage(
+    recipient: string,
+    message: Extract<WhatsAppOutboundMessage, { kind: "buttons" }>,
+  ): Promise<MessageResult> {
+    const sock = this.socket;
+    if (!sock || !this.connectionState.connected || !sock.user?.id) {
+      return {
+        ok: false,
+        provider: "baileys",
+        timestamp: new Date().toISOString(),
+        error: "WhatsApp socket is not connected",
+      };
+    }
+
+    const jid = resolveWhatsAppOutboundJid(recipient);
+    const messageId = generateMessageIDV2(jidNormalizedUser(sock.user.id));
+    const buttonsMessage: proto.Message.IButtonsMessage = {
+      contentText: message.body,
+      footerText: message.footer ?? "JustCocon",
+      headerType: proto.Message.ButtonsMessage.HeaderType.EMPTY,
+      buttons: message.buttons.map((button) => ({
+        buttonId: button.buttonId,
+        buttonText: { displayText: button.displayText },
+        type: proto.Message.ButtonsMessage.Button.Type.RESPONSE,
+      })),
+    };
+
+    try {
+      const payload = proto.Message.fromObject({ buttonsMessage });
+      await sock.relayMessage(jid, payload, { messageId });
+      return {
+        ok: true,
+        provider: "baileys",
+        timestamp: new Date().toISOString(),
+        messageId,
+      };
+    } catch (error) {
+      const errMsg =
+        error instanceof Error ? error.message : "buttons send failed";
+      this.logger.error("Baileys buttons message send failed", { errMsg });
+      return {
+        ok: false,
+        provider: "baileys",
+        timestamp: new Date().toISOString(),
+        error: errMsg,
+      };
+    }
+  }
+
+  private async sendListMessage(
+    recipient: string,
+    message: Extract<WhatsAppOutboundMessage, { kind: "list" }>,
+  ): Promise<MessageResult> {
+    const sock = this.socket;
+    if (!sock || !this.connectionState.connected || !sock.user?.id) {
+      return {
+        ok: false,
+        provider: "baileys",
+        timestamp: new Date().toISOString(),
+        error: "WhatsApp socket is not connected",
+      };
+    }
+
+    const jid = resolveWhatsAppOutboundJid(recipient);
+    const messageId = generateMessageIDV2(jidNormalizedUser(sock.user.id));
+    const listMessage: proto.Message.IListMessage = {
+      title: message.title,
+      description: message.description,
+      buttonText: message.buttonText,
+      listType: proto.Message.ListMessage.ListType.SINGLE_SELECT,
+      sections: [
+        {
+          title: message.title,
+          rows: message.rows.map((row) => ({
+            title: row.title,
+            rowId: row.rowId,
+            description: row.description ?? "",
+          })),
+        },
+      ],
+    };
+
+    try {
+      const payload = proto.Message.fromObject({ listMessage });
+      await sock.relayMessage(jid, payload, {
+        messageId,
+        additionalNodes: nativeFlowRelayAdditionalNodes(jid) as Parameters<
+          typeof sock.relayMessage
+        >[2]["additionalNodes"],
+      });
+      return {
+        ok: true,
+        provider: "baileys",
+        timestamp: new Date().toISOString(),
+        messageId,
+      };
+    } catch (error) {
+      const errMsg = error instanceof Error ? error.message : "list send failed";
+      this.logger.error("Baileys list message send failed", { errMsg });
+      return {
+        ok: false,
+        provider: "baileys",
+        timestamp: new Date().toISOString(),
+        error: errMsg,
+      };
+    }
+  }
+
   async sendTextMessage(
     recipient: string,
     message: string,
@@ -83,26 +273,42 @@ export class LiveBaileysTransport implements WhatsAppTransport {
       };
     }
 
-    try {
-      const jid = e164ToWhatsAppUserJid(recipient);
-      const sent = await sock.sendMessage(jid, { text: message });
-      const messageId = sent?.key?.id ?? undefined;
-      return {
-        ok: true,
-        provider: "baileys",
-        timestamp: new Date().toISOString(),
-        messageId,
-      };
-    } catch (error) {
-      const errMsg = error instanceof Error ? error.message : "send failed";
-      this.logger.error("Baileys outbound send failed", { errMsg });
-      return {
-        ok: false,
-        provider: "baileys",
-        timestamp: new Date().toISOString(),
-        error: errMsg,
-      };
+    const jid = resolveWhatsAppOutboundJid(recipient);
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const active = this.socket;
+      if (!active || !this.connectionState.connected) {
+        await sleep(500);
+        continue;
+      }
+      try {
+        const sent = await active.sendMessage(jid, { text: message });
+        const messageId = sent?.key?.id ?? undefined;
+        return {
+          ok: true,
+          provider: "baileys",
+          timestamp: new Date().toISOString(),
+          messageId,
+        };
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : "send failed";
+        if (attempt === 3) {
+          this.logger.error("Baileys outbound send failed", { errMsg, jidKind: jid.includes("@lid") ? "lid" : "standard" });
+          return {
+            ok: false,
+            provider: "baileys",
+            timestamp: new Date().toISOString(),
+            error: errMsg,
+          };
+        }
+        await sleep(400 * attempt);
+      }
     }
+    return {
+      ok: false,
+      provider: "baileys",
+      timestamp: new Date().toISOString(),
+      error: "WhatsApp socket is not connected",
+    };
   }
 
   private authDirectory(): string {
@@ -117,11 +323,6 @@ export class LiveBaileysTransport implements WhatsAppTransport {
       if (this.connectionState.status === "connected") {
         return;
       }
-      if (this.loggedOut) {
-        throw new Error(
-          "WhatsApp session logged out. Clear WHATSAPP_AUTH_DIRECTORY and scan QR again.",
-        );
-      }
       if (this.connectionState.status === "error") {
         throw new Error(
           this.connectionState.details ?? "Baileys connection failed",
@@ -135,7 +336,7 @@ export class LiveBaileysTransport implements WhatsAppTransport {
   }
 
   private async runConnectLoop(): Promise<void> {
-    while (!this.stopping && !this.loggedOut) {
+    while (!this.stopping) {
       try {
         await this.openSessionUntilClose();
       } catch (error) {
@@ -150,13 +351,25 @@ export class LiveBaileysTransport implements WhatsAppTransport {
         };
       }
 
-      if (this.stopping || this.loggedOut) {
+      if (this.stopping) {
         break;
       }
 
       this.logger.warn("Baileys reconnecting after disconnect");
       await sleep(3_000);
     }
+  }
+
+  private async clearAuthDirectory(authDir: string): Promise<void> {
+    await rm(authDir, { recursive: true, force: true });
+    await mkdir(authDir, { recursive: true });
+  }
+
+  private sessionNeedsFreshPairing(statusCode: number | undefined): boolean {
+    return (
+      statusCode === DisconnectReason.loggedOut ||
+      statusCode === DisconnectReason.badSession
+    );
   }
 
   private async openSessionUntilClose(): Promise<void> {
@@ -221,18 +434,32 @@ export class LiveBaileysTransport implements WhatsAppTransport {
 
           const statusCode = new Boom(update.lastDisconnect?.error).output
             ?.statusCode;
-          if (statusCode === DisconnectReason.loggedOut) {
-            this.loggedOut = true;
-            this.connectionState = {
-              connected: false,
-              provider: "baileys",
-              status: "error",
-              details: "logged out",
-            };
+          if (this.sessionNeedsFreshPairing(statusCode)) {
             this.logger.warn(
-              "Baileys logged out; clear auth directory and scan QR again",
+              "Baileys session invalid; clearing saved auth and preparing a new QR",
+              { statusCode },
             );
-          } else if (!this.stopping) {
+            void this.clearAuthDirectory(authDir)
+              .catch((error: unknown) => {
+                const message =
+                  error instanceof Error ? error.message : "clear auth failed";
+                this.logger.error("Failed to clear Baileys auth directory", {
+                  message,
+                });
+              })
+              .finally(() => {
+                this.connectionState = {
+                  connected: false,
+                  provider: "baileys",
+                  status: "connecting",
+                };
+                sock.ev.off("connection.update", onConnectionUpdate);
+                resolve();
+              });
+            return;
+          }
+
+          if (!this.stopping) {
             this.logger.warn("Baileys connection closed", { statusCode });
           }
 
@@ -265,8 +492,17 @@ export class LiveBaileysTransport implements WhatsAppTransport {
     }
 
     for (const raw of event.messages) {
+      if (!isDirectUserChatJid(raw.key.remoteJid?.trim())) {
+        continue;
+      }
+      if (!isRealMessage(raw as Parameters<typeof isRealMessage>[0])) {
+        continue;
+      }
       const mapped = mapBaileysMessageToInbound(raw);
       if (!mapped) {
+        continue;
+      }
+      if (mapped.kind !== "text" || !mapped.text?.trim()) {
         continue;
       }
       try {

@@ -1,15 +1,18 @@
-import { planWhatsAppOutboundMessages } from "@justcocon/booking-domain";
+import type { DateValidationClock } from "@justcocon/validation";
 import {
   isUniqueViolation,
   normalizeWhatsAppPhone,
   type PersistenceRepositories,
 } from "@justcocon/persistence";
+import { planWhatsAppOutboundInteractiveMessages } from "../whatsapp/interactive-outbound-planner.js";
+import type { WhatsAppOutboundMessage } from "../whatsapp/outbound-types.js";
 import type { BookingOrchestrator } from "../booking-orchestrator.js";
 import { ConversationSessionService } from "../conversation/session-service.js";
 import { maskPhone } from "../log-safety.js";
 import type { createLogger } from "../logger.js";
 import type { WhatsAppTransport } from "../whatsapp/transport-types.js";
 import { withPhoneMutex } from "./phone-mutex.js";
+import { isDirectUserChatJid } from "../whatsapp/baileys/chat-jid.js";
 import type { InboundWhatsAppMessage } from "../whatsapp/transport-types.js";
 
 export interface InboundMessageHandlerDeps {
@@ -17,6 +20,9 @@ export interface InboundMessageHandlerDeps {
   orchestrator: BookingOrchestrator;
   transport: WhatsAppTransport;
   logger: ReturnType<typeof createLogger>;
+  whatsappInteractiveUi: boolean;
+  whatsappUseNativeButtons: boolean;
+  clock: DateValidationClock;
 }
 
 export class InboundMessageHandler {
@@ -134,20 +140,38 @@ export class InboundMessageHandler {
       receivedAt,
     );
 
-    const outboundMessages = planWhatsAppOutboundMessages(result.replies);
+    const outboundMessages = planWhatsAppOutboundInteractiveMessages(result, {
+      interactiveEnabled: this.deps.whatsappInteractiveUi,
+      useNativeButtons: this.deps.whatsappUseNativeButtons,
+      clock: this.deps.clock,
+    });
+    const outboundRecipient =
+      message.replyWhatsAppJid?.trim() || phone.normalized;
+    if (
+      outboundRecipient.includes("@") &&
+      !isDirectUserChatJid(outboundRecipient)
+    ) {
+      this.deps.logger.warn("Refusing outbound reply to non-direct chat JID", {
+        sessionId: session.id,
+        phone: maskPhone(phone.normalized),
+        providerMessageId: message.providerMessageId,
+      });
+      return;
+    }
 
-    for (const reply of outboundMessages) {
-      const sendResult = await this.deps.transport.sendTextMessage(
-        phone.normalized,
-        reply,
+    for (const outbound of outboundMessages) {
+      const sendResult = await this.deps.transport.sendOutbound(
+        outboundRecipient,
+        outbound,
       );
+      const storedText = serializeOutboundForStorage(outbound);
 
       await this.deps.repos.whatsappMessages.insert({
         whatsapp_number: phone.display,
         normalized_whatsapp_number: phone.normalized,
         direction: "outgoing",
         message_type: "text",
-        message_text: reply,
+        message_text: storedText,
         conversation_session_id: session.id,
         provider_message_id: sendResult.messageId ?? null,
         delivery_status: sendResult.ok ? "sent" : "failed",
@@ -159,6 +183,12 @@ export class InboundMessageHandler {
           phone: maskPhone(phone.normalized),
           error: sendResult.error ?? "unknown",
         });
+      } else {
+        this.deps.logger.info("Outbound WhatsApp reply sent", {
+          sessionId: session.id,
+          phone: maskPhone(phone.normalized),
+          kind: outbound.kind,
+        });
       }
     }
   }
@@ -168,4 +198,16 @@ export function createInboundMessageHandler(
   deps: InboundMessageHandlerDeps,
 ): InboundMessageHandler {
   return new InboundMessageHandler(deps);
+}
+
+function serializeOutboundForStorage(message: WhatsAppOutboundMessage): string {
+  if (message.kind === "text") {
+    return message.body;
+  }
+  if (message.kind === "buttons" || message.kind === "native_flow") {
+    const labels = message.buttons.map((b) => b.displayText).join(", ");
+    return `${message.body}\n[Buttons: ${labels}]`;
+  }
+  const rowSummary = message.rows.map((r) => r.title).join(", ");
+  return `${message.title}\n${message.description}\n[${message.buttonText}: ${rowSummary}]`;
 }

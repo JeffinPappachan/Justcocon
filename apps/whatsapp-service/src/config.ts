@@ -11,6 +11,9 @@ export interface AppConfig {
   whatsappProvider: string;
   whatsappAuthDirectory?: string;
   whatsappEnableLive: boolean;
+  whatsappInteractiveUi: boolean;
+  /** Legacy Baileys buttons; often invisible on linked-device chats. Default off. */
+  whatsappUseNativeButtons: boolean;
   bookingMode: string;
   supabaseUrl?: string;
   supabaseServiceRoleKey?: string;
@@ -25,6 +28,9 @@ export function loadConfig(): AppConfig {
     whatsappProvider: process.env.WHATSAPP_PROVIDER ?? "baileys",
     whatsappAuthDirectory: process.env.WHATSAPP_AUTH_DIRECTORY,
     whatsappEnableLive: process.env.WHATSAPP_ENABLE_LIVE === "true",
+    // Lists/buttons via Baileys rarely render on personal WhatsApp mobile; text prompts still work.
+    whatsappInteractiveUi: process.env.WHATSAPP_INTERACTIVE_UI === "true",
+    whatsappUseNativeButtons: process.env.WHATSAPP_USE_NATIVE_BUTTONS === "true",
     bookingMode: process.env.BOOKING_MODE ?? "demo",
     supabaseUrl: process.env.SUPABASE_URL,
     supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,

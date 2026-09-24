@@ -1,3 +1,4 @@
+import { parseTreeCountCategory } from "@justcocon/validation";
 import type { WebsiteHint } from "./conversation-context.js";
 
 /** Parses optional website prefill; never treated as validated booking data. */
@@ -28,6 +29,12 @@ export function applyWebsiteHintToDraft(
   const next = { ...draft };
   if (hint.suggestedLocation && !next.locationText) {
     next.locationText = hint.suggestedLocation;
+  }
+  if (hint.suggestedTreeLabel && !next.treeCountCategory) {
+    const category = parseTreeCountCategory(hint.suggestedTreeLabel);
+    if (category) {
+      next.treeCountCategory = category;
+    }
   }
   return next;
 }

@@ -15,6 +15,8 @@ export type TreeCountCategory = "1-5" | "6-10" | "11-25" | "26-50" | "50+";
 /** WhatsApp conversation FSM phase (not booking lifecycle status). */
 export type ConversationPhase =
   | "IDLE"
+  | "AWAITING_START"
+  | "AWAITING_MENU"
   | "COLLECTING_NAME"
   | "COLLECTING_LOCATION"
   | "COLLECTING_TREE_COUNT"

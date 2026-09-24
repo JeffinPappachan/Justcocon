@@ -6,3 +6,12 @@ export function e164ToWhatsAppUserJid(recipient: string): string {
   }
   return `${digits}@s.whatsapp.net`;
 }
+
+/** Prefer the inbound remote JID; fall back to E.164-derived user JID. */
+export function resolveWhatsAppOutboundJid(recipient: string): string {
+  const trimmed = recipient.trim();
+  if (trimmed.includes("@")) {
+    return trimmed;
+  }
+  return e164ToWhatsAppUserJid(trimmed);
+}

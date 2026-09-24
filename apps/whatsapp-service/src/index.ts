@@ -32,6 +32,9 @@ const inboundHandler = createInboundMessageHandler({
   orchestrator: bookingBundle.orchestrator,
   transport,
   logger,
+  whatsappInteractiveUi: config.whatsappInteractiveUi,
+  whatsappUseNativeButtons: config.whatsappUseNativeButtons,
+  clock: validationClock,
 });
 
 async function start() {

@@ -15,6 +15,26 @@ export interface BaileysLikeInboundMessage {
   message?: {
     conversation?: string;
     extendedTextMessage?: { text?: string };
+    buttonsResponseMessage?: {
+      selectedButtonId?: string;
+      selectedDisplayText?: string;
+    };
+    listResponseMessage?: {
+      title?: string;
+      singleSelectReply?: {
+        selectedRowId?: string;
+        selectedTitle?: string;
+      };
+    };
+    templateButtonReplyMessage?: {
+      selectedId?: string;
+      selectedDisplayText?: string;
+    };
+    interactiveResponseMessage?: {
+      nativeFlowResponseMessage?: {
+        paramsJson?: string;
+      };
+    };
   };
   messageTimestamp?: number | { toNumber?: () => number };
 }

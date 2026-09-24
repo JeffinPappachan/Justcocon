@@ -35,6 +35,14 @@ export class MockFirstBaileysAdapter implements BaileysAdapter {
     return { ...status, provider: "baileys-mock" };
   }
 
+  async sendOutbound(
+    recipient: string,
+    message: Parameters<MockWhatsAppTransport["sendOutbound"]>[1],
+  ): Promise<MessageResult> {
+    const result = await this.mock.sendOutbound(recipient, message);
+    return { ...result, provider: "baileys-mock" };
+  }
+
   async sendTextMessage(
     recipient: string,
     message: string,

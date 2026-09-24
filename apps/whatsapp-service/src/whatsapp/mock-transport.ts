@@ -1,4 +1,5 @@
 import type { ConnectionStatus, MessageResult } from "../types.js";
+import type { WhatsAppOutboundMessage } from "./outbound-types.js";
 import type { InboundWhatsAppMessage, WhatsAppTransport } from "./transport-types.js";
 
 export class MockWhatsAppTransport implements WhatsAppTransport {
@@ -28,6 +29,26 @@ export class MockWhatsAppTransport implements WhatsAppTransport {
       provider: "mock",
       status: this.started ? "connected" : "disconnected",
     };
+  }
+
+  async sendOutbound(
+    recipient: string,
+    message: WhatsAppOutboundMessage,
+  ): Promise<MessageResult> {
+    if (message.kind === "list") {
+      return this.sendTextMessage(
+        recipient,
+        `[list:${message.buttonText}] ${message.title}`,
+      );
+    }
+    if (message.kind === "buttons" || message.kind === "native_flow") {
+      const labels = message.buttons.map((b) => b.displayText).join(" | ");
+      return this.sendTextMessage(
+        recipient,
+        `[buttons] ${message.body}\n(${labels})`,
+      );
+    }
+    return this.sendTextMessage(recipient, message.body);
   }
 
   async sendTextMessage(

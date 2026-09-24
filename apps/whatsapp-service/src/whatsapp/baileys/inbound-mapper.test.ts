@@ -33,3 +33,31 @@ test("inbound-mapper: missing text is unsupported kind", () => {
   assert.ok(mapped);
   assert.equal(mapped?.kind, "unsupported");
 });
+
+test("inbound-mapper: group messages are ignored", () => {
+  const mapped = mapBaileysMessageToInbound({
+    key: {
+      id: "BAILEYS-GROUP-1",
+      fromMe: false,
+      remoteJid: "120363422012345678@g.us",
+      participant: "919990002001@s.whatsapp.net",
+    },
+    message: { conversation: "Hi" },
+    messageTimestamp: 1_700_000_003,
+  });
+  assert.equal(mapped, null);
+});
+
+test("inbound-mapper: direct chat reply JID is the user remoteJid", () => {
+  const mapped = mapBaileysMessageToInbound({
+    key: {
+      id: "BAILEYS-DM-1",
+      fromMe: false,
+      remoteJid: "919990002001@s.whatsapp.net",
+    },
+    message: { conversation: "Hi" },
+    messageTimestamp: 1_700_000_004,
+  });
+  assert.ok(mapped);
+  assert.equal(mapped?.replyWhatsAppJid, "919990002001@s.whatsapp.net");
+});

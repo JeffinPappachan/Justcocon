@@ -32,9 +32,16 @@ function external(
   return reduceConversation(ctx, { kind: "external_event", event }, deps);
 }
 
-function happyDraftSteps(ctx: ConversationContext): ConversationContext {
+function openBookingMenu(ctx: ConversationContext): ConversationContext {
   let c = ctx;
+  c = user(c, "hi").context;
+  c = user(c, "start").context;
   c = user(c, "BOOK").context;
+  return c;
+}
+
+function happyDraftSteps(ctx: ConversationContext): ConversationContext {
+  let c = openBookingMenu(ctx);
   c = user(c, "Anu Thomas").context;
   c = user(c, "Kochi, Kerala").context;
   c = user(c, "2").context;
@@ -44,10 +51,24 @@ function happyDraftSteps(ctx: ConversationContext): ConversationContext {
   return c;
 }
 
-test("IDLE + START begins name collection", () => {
+test("IDLE + START shows welcome then menu then BOOK begins name collection", () => {
   const ctx = createInitialContext("+919876543210");
-  const result = user(ctx, "start");
+  const welcome = user(ctx, "start");
+  assert.equal(welcome.phase, "AWAITING_START");
+  const menu = user(welcome.context, "start");
+  assert.equal(menu.phase, "AWAITING_MENU");
+  const result = user(menu.context, "BOOK");
   assert.equal(result.phase, "COLLECTING_NAME");
+});
+
+test("CLOSE on menu returns to welcome", () => {
+  const ctx = createInitialContext("+919876543210");
+  let c = user(ctx, "hi").context;
+  c = user(c, "start").context;
+  assert.equal(c.phase, "AWAITING_MENU");
+  const back = user(c, "CLOSE");
+  assert.equal(back.phase, "AWAITING_START");
+  assert.match(back.replies.join(" "), /Welcome to JustCocon/);
 });
 
 test("full happy path reaches AWAITING_CONFIRMATION", () => {
@@ -58,7 +79,7 @@ test("full happy path reaches AWAITING_CONFIRMATION", () => {
 
 test("SKIP on notes reaches summary with null notes", () => {
   let c = createInitialContext("+919876543210");
-  c = user(c, "BOOK").context;
+  c = openBookingMenu(c);
   c = user(c, "Anu Thomas").context;
   c = user(c, "Kochi").context;
   c = user(c, "1").context;
@@ -71,7 +92,7 @@ test("SKIP on notes reaches summary with null notes", () => {
 
 test("incomplete CONFIRM stays on summary", () => {
   let c = createInitialContext("+919876543210");
-  c = user(c, "BOOK").context;
+  c = openBookingMenu(c);
   c = user(c, "Anu").context;
   c.phase = "AWAITING_CONFIRMATION";
   const result = user(c, "CONFIRM");
@@ -144,6 +165,85 @@ test("CONFIRM in COMPLETED does not submit again", () => {
   assert.equal(result.effects[0]?.type, "none");
 });
 
+function contextAfterSuccessfulSubmit(
+  ref = "JC-20260924-F4EB",
+): ConversationContext {
+  let c = happyDraftSteps(createInitialContext("+919876543210"));
+  c = user(c, "CONFIRM").context;
+  return external(c, {
+    type: "persistence_success",
+    bookingReference: ref,
+    bookingId: "id-1",
+  }).context;
+}
+
+function assertCompletedClosingReply(
+  result: ReturnType<typeof user>,
+  expectedRef?: string,
+) {
+  assert.equal(result.phase, "COMPLETED");
+  assert.equal(result.effects[0]?.type, "none");
+  assert.equal(
+    result.effects.filter((e) => e.type === "submit_booking").length,
+    0,
+  );
+  const text = result.replies.join("\n");
+  if (expectedRef) {
+    assert.match(text, new RegExp(expectedRef));
+  }
+  assert.match(text, /pending staff review/i);
+  assert.match(text, /no harvesting crew has been assigned yet/i);
+  assert.match(text, /START or BOOK/);
+  assert.doesNotMatch(text, /CONFIRM only on the summary/);
+}
+
+for (const casual of ["Ok", "Thanks", "Thank you", "Great", "👍"]) {
+  test(`COMPLETED casual "${casual}" returns closing message`, () => {
+    const c = contextAfterSuccessfulSubmit();
+    assertCompletedClosingReply(user(c, casual), "JC-20260924-F4EB");
+  });
+}
+
+test("COMPLETED closing message omits hardcoded reference when unavailable", () => {
+  let c = contextAfterSuccessfulSubmit();
+  c = {
+    ...c,
+    submission: { ...c.submission, bookingReference: undefined },
+  };
+  const result = user(c, "Thanks");
+  assertCompletedClosingReply(result);
+  const text = result.replies.join("\n");
+  assert.match(text, /booking request has been received/i);
+  assert.doesNotMatch(text, /JC-/);
+});
+
+test("CANCELLED casual text returns cancellation closing", () => {
+  const c = happyDraftSteps(createInitialContext("+919876543210"));
+  const cancelled = user(c, "stop").context;
+  assert.equal(cancelled.phase, "CANCELLED");
+  const result = user(cancelled, "Ok");
+  assert.equal(result.phase, "CANCELLED");
+  assert.equal(result.effects[0]?.type, "none");
+  const text = result.replies.join("\n");
+  assert.match(text, /cancelled/i);
+  assert.match(text, /START or BOOK/);
+  assert.doesNotMatch(text, /CONFIRM only on the summary/);
+});
+
+test("START after COMPLETED opens welcome without resubmitting", () => {
+  const c = contextAfterSuccessfulSubmit();
+  const result = user(c, "start");
+  assert.equal(result.phase, "AWAITING_START");
+  assert.equal(result.effects[0]?.type, "none");
+});
+
+test("RESTART after COMPLETED opens welcome without resubmitting", () => {
+  const c = contextAfterSuccessfulSubmit();
+  const result = user(c, "RESTART");
+  assert.equal(result.phase, "AWAITING_START");
+  assert.equal(result.effects[0]?.type, "none");
+});
+
 const cancelPhases: ConversationPhase[] = [
   "COLLECTING_NAME",
   "COLLECTING_LOCATION",
@@ -178,7 +278,7 @@ test("CANCEL blocked during PERSISTING", () => {
 test("RESTART clears draft and collects name again", () => {
   let c = happyDraftSteps(createInitialContext("+919876543210"));
   const result = user(c, "start over");
-  assert.equal(result.phase, "COLLECTING_NAME");
+  assert.equal(result.phase, "AWAITING_START");
   assert.deepEqual(result.context.draft, {});
 });
 
@@ -201,7 +301,7 @@ test("EDIT flow returns to summary with updated field", () => {
 
 test("invalid field input keeps phase", () => {
   let c = createInitialContext("+919876543210");
-  c = user(c, "BOOK").context;
+  c = openBookingMenu(c);
   const result = user(c, " ");
   assert.equal(result.phase, "COLLECTING_NAME");
 });
@@ -223,8 +323,24 @@ test("buildBookingFromDraft uses PENDING_STAFF_REVIEW only", () => {
   assert.notEqual(booking.status, "CONFIRMED_BY_STAFF");
 });
 
+test("website BOOK with hints from IDLE starts name collection", () => {
+  const result = user(
+    createInitialContext("+919876543210"),
+    "BOOK\nLocation: Kozhikode (Calicut) & surrounding areas\nTrees: 1-5 trees",
+  );
+  assert.equal(result.phase, "COLLECTING_NAME");
+  assert.equal(
+    result.context.draft.locationText,
+    "Kozhikode (Calicut) & surrounding areas",
+  );
+  assert.equal(result.context.draft.treeCountCategory, "1-5");
+  assert.match(result.replies[0] ?? "", /name/i);
+});
+
 test("website hint does not bypass validation on confirm", () => {
   let c = createInitialContext("+919876543210");
+  c = user(c, "hi").context;
+  c = user(c, "start").context;
   c = user(c, "BOOK\nLocation: Kochi\nTrees: 6-10 trees").context;
   assert.ok(c.websiteHint?.suggestedLocation);
   c = user(c, "Anu Thomas").context;
@@ -246,7 +362,7 @@ test("BOOK after COMPLETED starts new flow", () => {
     bookingId: "9",
   }).context;
   const result = user(c, "BOOK");
-  assert.equal(result.phase, "COLLECTING_NAME");
+  assert.equal(result.phase, "AWAITING_START");
 });
 
 test("command synonyms confirm yes and cancel stop", () => {

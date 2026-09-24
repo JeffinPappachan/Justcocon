@@ -151,9 +151,14 @@ function handleGlobalCommand(
     case "HELP":
       return unchanged(context, [helpMessage(context.phase)]);
 
-    case "BOOK":
     case "START":
-      return startBooking(context, rawText);
+      return handleStart(context);
+
+    case "BOOK":
+      return handleBook(context, rawText);
+
+    case "CLOSE":
+      return handleClose(context);
 
     case "CANCEL":
       return handleCancel(context);
@@ -178,16 +183,10 @@ function handleGlobalCommand(
   }
 }
 
-function startBooking(
+function beginNameCollection(
   context: ConversationContext,
   rawText: string,
 ): ConversationTurnResult {
-  if (!["IDLE", "COMPLETED", "CANCELLED"].includes(context.phase)) {
-    return unchanged(context, [
-      "You already have a booking in progress. Reply RESTART to begin again or CANCEL to stop.",
-    ]);
-  }
-
   const hint = parseWebsiteHintFromMessage(rawText.trim());
   let next = clearDraft(context);
   next = {
@@ -200,17 +199,110 @@ function startBooking(
   return {
     phase: next.phase,
     context: next,
+    replies: ["What is your name?"],
+    effects: [NO_EFFECT],
+  };
+}
+
+function showWelcome(context: ConversationContext): ConversationTurnResult {
+  const next: ConversationContext = {
+    ...clearDraft(context),
+    phase: "AWAITING_START",
+  };
+  return {
+    phase: "AWAITING_START",
+    context: next,
     replies: [
-      "Let's start your coconut harvesting request. What is your name?",
+      "Hello! Welcome to JustCocon.",
+      "We help you schedule coconut harvesting in Kerala.",
+      "Reply START to continue.",
     ],
     effects: [NO_EFFECT],
   };
 }
 
+function showBookOrCloseMenu(context: ConversationContext): ConversationTurnResult {
+  const next: ConversationContext = {
+    ...context,
+    phase: "AWAITING_MENU",
+  };
+  return {
+    phase: "AWAITING_MENU",
+    context: next,
+    replies: [
+      "Choose an option to continue.",
+      "Reply BOOK to schedule a visit, or CLOSE to return to welcome.",
+    ],
+    effects: [NO_EFFECT],
+  };
+}
+
+function handleStart(context: ConversationContext): ConversationTurnResult {
+  if (context.phase === "AWAITING_START") {
+    return showBookOrCloseMenu(context);
+  }
+  if (["IDLE", "COMPLETED", "CANCELLED"].includes(context.phase)) {
+    return showWelcome(context);
+  }
+  if (context.phase === "AWAITING_MENU") {
+    return unchanged(context, [
+      "You are already on the menu. Reply BOOK to continue or CLOSE to go back.",
+    ]);
+  }
+  return unchanged(context, [
+    "You already have a booking in progress. Reply RESTART to begin again or CANCEL to stop.",
+  ]);
+}
+
+function handleBook(
+  context: ConversationContext,
+  rawText: string,
+): ConversationTurnResult {
+  const websiteHint = parseWebsiteHintFromMessage(rawText.trim());
+  const canStartFromWelcome = [
+    "IDLE",
+    "COMPLETED",
+    "CANCELLED",
+    "AWAITING_START",
+    "AWAITING_MENU",
+  ].includes(context.phase);
+
+  if (canStartFromWelcome && websiteHint) {
+    return beginNameCollection(context, rawText);
+  }
+  if (context.phase === "AWAITING_MENU") {
+    return beginNameCollection(context, rawText);
+  }
+  if (context.phase === "AWAITING_START") {
+    return unchanged(context, [
+      "Reply START first, then BOOK to schedule a harvest.",
+    ]);
+  }
+  if (["IDLE", "COMPLETED", "CANCELLED"].includes(context.phase)) {
+    return showWelcome(context);
+  }
+  return unchanged(context, [
+    "You already have a booking in progress. Reply RESTART to begin again or CANCEL to stop.",
+  ]);
+}
+
+function handleClose(context: ConversationContext): ConversationTurnResult {
+  if (
+    context.phase === "AWAITING_MENU" ||
+    context.phase === "COMPLETED" ||
+    context.phase === "CANCELLED"
+  ) {
+    return showWelcome(context);
+  }
+  return unchanged(context, [
+    "Close is only available on the Book / Close menu.",
+  ]);
+}
+
 function handleCancel(context: ConversationContext): ConversationTurnResult {
   if (context.phase === "PERSISTING") {
     return unchanged(context, [
-      "Your booking is being saved. Please wait ‚Äî CANCEL is not available during this step.",
+      "Your booking is being saved. Please wait ù CANCEL is not available during this step.",
     ]);
   }
   if (!CANCEL_ALLOWED.includes(context.phase)) {
@@ -224,7 +316,7 @@ function handleCancel(context: ConversationContext): ConversationTurnResult {
   return {
     phase: "CANCELLED",
     context: next,
-    replies: ["Your booking draft was cancelled. Reply BOOK to start again."],
+    replies: ["Your booking draft was cancelled. Reply START to open the menu again."],
     effects: [NO_EFFECT],
   };
 }
@@ -235,23 +327,17 @@ function handleRestart(context: ConversationContext): ConversationTurnResult {
       "Please wait while your booking is being saved. RESTART is not available now.",
     ]);
   }
+  if (context.phase === "AWAITING_START" || context.phase === "AWAITING_MENU") {
+    return showWelcome(context);
+  }
   if (!RESTART_ALLOWED.includes(context.phase) && context.phase !== "IDLE") {
     if (context.phase === "COMPLETED" || context.phase === "CANCELLED") {
-      return startBooking(context, "BOOK");
+      return showWelcome(context);
     }
-    return unchanged(context, ["Reply BOOK to start a new booking."]);
+    return unchanged(context, ["Reply START to open the welcome menu."]);
   }
 
-  const next: ConversationContext = {
-    ...clearDraft(context),
-    phase: "COLLECTING_NAME",
-  };
-  return {
-    phase: "COLLECTING_NAME",
-    context: next,
-    replies: ["Starting over. What is your name?"],
-    effects: [NO_EFFECT],
-  };
+  return showWelcome(context);
 }
 
 function handleSkipNotes(context: ConversationContext): ConversationTurnResult {
@@ -289,10 +375,12 @@ function handleEditFieldSelect(
   const phase = phaseForEditTarget(target);
   const prompts: Record<ConversationPhase, string> = {
     IDLE: "",
+    AWAITING_START: "",
+    AWAITING_MENU: "",
     COLLECTING_NAME: "What is your updated name?",
     COLLECTING_LOCATION: "What is your updated location or address?",
     COLLECTING_TREE_COUNT:
-      "How many coconut trees? Reply 1‚Äì5 for ranges: 1=1-5, 2=6-10, 3=11-25, 4=26-50, 5=50+.",
+      "How many coconut trees? Reply 1ù5 for ranges: 1=1-5, 2=6-10, 3=11-25, 4=26-50, 5=50+.",
     COLLECTING_PREFERRED_DATE: "What is your updated preferred date (YYYY-MM-DD)?",
     COLLECTING_PREFERRED_TIME:
       "Preferred time window: 1=Morning, 2=Afternoon, 3=Evening, 4=Flexible.",
@@ -360,7 +448,7 @@ function handleConfirm(
         idempotencyKey,
       },
     },
-    replies: ["Saving your booking request‚Ä¶"],
+    replies: ["Saving your booking requestù"],
     effects: [
       {
         type: "submit_booking",
@@ -399,7 +487,7 @@ function handleRetry(context: ConversationContext): ConversationTurnResult {
         idempotencyKey,
       },
     },
-    replies: ["Retrying to save your booking request‚Ä¶"],
+    replies: ["Retrying to save your booking requestù"],
     effects: [
       {
         type: "submit_booking",
@@ -410,12 +498,38 @@ function handleRetry(context: ConversationContext): ConversationTurnResult {
   };
 }
 
+function postSubmitOrCancelAckReplies(
+  context: ConversationContext,
+): string[] | null {
+  if (context.phase === "COMPLETED") {
+    const receivedLine = context.submission.bookingReference
+      ? `Your request ${context.submission.bookingReference} has been received and is pending staff review.`
+      : "Your booking request has been received and is pending staff review.";
+    return [
+      `You're all set. ${receivedLine} No harvesting crew has been assigned yet.`,
+      "Reply START or BOOK whenever you want to schedule another visit.",
+    ];
+  }
+  if (context.phase === "CANCELLED") {
+    return [
+      "This booking draft was cancelled.",
+      "Reply START or BOOK when you want to begin again.",
+    ];
+  }
+  return null;
+}
+
 function handleFieldText(
   context: ConversationContext,
   text: string,
   deps: ConversationEngineDeps,
 ): ConversationTurnResult {
+  void deps;
   const phase = context.phase;
+  const postSubmitAck = postSubmitOrCancelAckReplies(context);
+  if (postSubmitAck) {
+    return unchanged(context, postSubmitAck);
+  }
   if (!COLLECTION_PHASES.includes(phase)) {
     return unchanged(context, [
       "Please use a command or follow the current step.",
@@ -449,7 +563,7 @@ function handleFieldText(
       const category = parseTreeCountCategory(text);
       if (!category) {
         validationError =
-          "Tree count is invalid. Reply 1‚Äì5 for ranges: 1=1-5, 2=6-10, 3=11-25, 4=26-50, 5=50+.";
+          "Tree count is invalid. Reply 1ù5 for ranges: 1=1-5, 2=6-10, 3=11-25, 4=26-50, 5=50+.";
         break;
       }
       nextDraft = applyDraftField(nextDraft, phase, text, category);
@@ -549,18 +663,22 @@ function nextPhaseAfterCollection(phase: ConversationPhase): ConversationPhase {
 
 function promptForPhase(phase: ConversationPhase): string {
   switch (phase) {
+    case "AWAITING_START":
+      return helpMessage("AWAITING_START");
+    case "AWAITING_MENU":
+      return helpMessage("AWAITING_MENU");
     case "COLLECTING_NAME":
       return "What is your name?";
     case "COLLECTING_LOCATION":
       return "What is your location or full address?";
     case "COLLECTING_TREE_COUNT":
-      return "Approximate coconut tree count? Reply: 1=1-5, 2=6-10, 3=11-25, 4=26-50, 5=50+.";
+      return "How many coconut trees? Reply: 1=1-5, 2=6-10, 3=11-25, 4=26-50, 5=50+.";
     case "COLLECTING_PREFERRED_DATE":
-      return "Preferred harvesting date (YYYY-MM-DD)?";
+      return "Preferred harvesting date (YYYY-MM-DD), e.g. 2026-09-29.";
     case "COLLECTING_PREFERRED_TIME":
-      return "Preferred time window: 1=Morning, 2=Afternoon, 3=Evening, 4=Flexible.";
+      return "Preferred time: 1=Morning, 2=Afternoon, 3=Evening, 4=Flexible.";
     case "COLLECTING_NOTES":
-      return "Optional notes (access, timing). Reply SKIP to omit.";
+      return "Optional access notes (gate, path, call on arrival), or reply SKIP.";
     default:
       return helpMessage(phase);
   }
